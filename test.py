@@ -366,4 +366,4 @@ if __name__ == '__main__':
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
     set_seed(42)
-    test(conf, load_episode=40, test_episodes=1)
+    test(conf, load_episode=60, test_episodes=1)
