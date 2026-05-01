@@ -1,11 +1,11 @@
-import time
 import os
-import json
-import pandas as pd
-import numpy as np
-import torch
 import random
+import time
+
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import torch
 from matplotlib.animation import FuncAnimation, PillowWriter
 
 from GDQN.net import GDQNNet, MCSHeteroGNN, IEVHeteroGNN
@@ -165,7 +165,7 @@ def test(conf, load_episode=95, test_episodes=10):
     mcs_epsilon = 1.0 if conf.get('MCS_RANDOM', False) else 0.0
     iev_epsilon = 1.0 if conf.get('IEV_RANDOM', False) else 0.0
 
-    MAX_STEPS = 100
+    MAX_STEPS = conf.get('TEST_MAX_STEPS_PER_EPISODE', 100)
 
     # 全局指标记录器
     history_metrics = {
@@ -178,7 +178,7 @@ def test(conf, load_episode=95, test_episodes=10):
         'avg_idle_time': [],
         'energy_efficiency': []
     }
-    tracked_mcs_ids = [mcs_id for mcs_id in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] if mcs_id < int(conf.get('NUM_MCS', 0))]
+    tracked_mcs_ids = [mcs_id for mcs_id in [0, 1, 2, 3, 4, 5] if mcs_id < int(conf.get('NUM_MCS', 0))]
     # 仅记录 mcs0/mcs1/mcs2 的坐标序列
     # 格式: [episode][step][tracked_mcs_idx] = [lon, lat]
     all_episode_mcs_positions = []
@@ -286,7 +286,7 @@ def test(conf, load_episode=95, test_episodes=10):
         total_consumed_energy = raw_mcs_cost / mcs_power_price if mcs_power_price > 0 else 0
 
         energy_efficiency = total_charged_energy / (total_charged_energy + total_consumed_energy) if (
-                                                                                                                 total_charged_energy + total_consumed_energy) > 0 else 0
+                                                                                                             total_charged_energy + total_consumed_energy) > 0 else 0
 
         # 保存至 history
         history_metrics['total_charged_prop'].append(charged_prop)
@@ -340,7 +340,7 @@ def test(conf, load_episode=95, test_episodes=10):
     #     json.dump(traj_payload, f, ensure_ascii=False, indent=2)
     # print(f"✅ MCS 逐 step 坐标序列已保存至：{traj_json_path}")
 
-    # 为每个测试 episode 绘制轨迹动画（仅 mcs0/mcs1/mcs2）
+    # 为每个测试 episode 绘制轨迹动画
     for ep_idx, ep_positions in enumerate(all_episode_mcs_positions):
         fig_path = f'./results/mcs_trajectory_{prefix}_ep{ep_idx + 1:02d}.gif'
         _animate_episode_mcs_trajectory(
@@ -355,15 +355,7 @@ def test(conf, load_episode=95, test_episodes=10):
 if __name__ == '__main__':
     # 假设你之前跑了 100 轮训练，你想加载第 95 轮的模型
     # 根据你保存模型时的 i_episode 传参
-    def set_seed(seed=42):
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed(seed)
-            torch.cuda.manual_seed_all(seed)  # 如果使用多GPU
-        # 保证 cuDNN 的确定性
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-    set_seed(42)
-    test(conf, load_episode=60, test_episodes=1)
+    # for i in [10, 20, 30, 40, 50, 60, 70, 80, 90]:
+    #     test(conf, load_episode=i, test_episodes=1)
+
+    test(conf, load_episode=90, test_episodes=1)

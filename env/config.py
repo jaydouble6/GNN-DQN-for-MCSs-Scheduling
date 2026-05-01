@@ -24,8 +24,8 @@ conf = {
     # -----------------------------
     # 运行模式
     # -----------------------------
-    "MCS_RANDOM": False,
-    'IEV_RANDOM': False,
+    "MCS_RANDOM": True,
+    'IEV_RANDOM': True,
     
     # -----------------------------
     # 环境参数（World / Env）
@@ -72,8 +72,7 @@ conf = {
     # -----------------------------
     # 推理/测试参数
     # -----------------------------
-    "INFERENCE_EPSILON": 0.0,        # 推理时的探索率（通常设为0，纯贪心策略）
-    "TEST_NUM_EPISODES": 10,         # 测试轮数：测试时运行的episode数量
+    "TEST_SEED": 2026,
     "TEST_MAX_STEPS_PER_EPISODE": 100,  # 测试每轮最大步数：测试时每个episode的最大时间步数
     "TEST_CKPT_PATH": os.path.join(os.path.dirname(__file__), "models", "gnn_dqn_best.pt"),  # 测试模型路径
 }
