@@ -190,7 +190,7 @@ class World(object):
         MAX_CHARGE_PER_SESSION = self.conf['CHARGE_SPEED'] / 3.0  # 充电过程中的最大充电量（单位：Kwh）
         max_steps = max(1.0, float(self.conf.get('MAX_STEPS_PER_EPISODE', 100)))
         step_progress = min(1.0, self.current_step / max_steps)
-        move_penalty_weight = 0.05 * step_progress
+        move_penalty_weight = 1.5
         mcs_local_weight = 0.8 - 0.3 * step_progress
         mcs_global_weight = 1.0 - mcs_local_weight
 
@@ -214,7 +214,7 @@ class World(object):
                     if min(quasi_iev.need_power, self.conf['CHARGE_SPEED'] / 3) <= agent.remain:
                         # 以“紧急度”主导吸引项：优先提升充电成功率，而非按需求电量大小拉开过大差距。
                         # 同时保留一个较弱的需求电量修正项，并整体做尺度约束，避免该项过大压制其它奖励。
-                        urgent = 1 + np.exp(-quasi_iev.remain)
+                        urgent = 1.0 + max(0.0, 1.0 - quasi_iev.remain / 30.0)
                         urgent = float(np.clip(urgent, 1.0, 2.0))
                         need_power_ratio = min(quasi_iev.need_power, self.conf['CHARGE_SPEED'] / 3) / MAX_CHARGE_PER_SESSION
                         attract = urgent * (1.0 + 0.2 * need_power_ratio)
@@ -237,12 +237,18 @@ class World(object):
 
                 # 若当前无quasi可调度，前期鼓励合理巡航而不是长期原地等待
                 if len(agent.near_quasi_IEV) == 0:
-                    explore_factor = max(0.0, 1.0 - step_progress)
-                    moved_ratio = min(agent.last_dist / max(1e-6, COMM_REGION_R), 1.0)
-                    if moved_ratio > 0:
-                        r_local += 0.08 * explore_factor * moved_ratio
+                    wider_quasi_count = 0
+                    nearest_quasi_dist = float('inf')
+                    for q in self.quasi_iev:
+                        d = haversine(q.pos[0], q.pos[1], agent.pos[0], agent.pos[1])
+                        if d < nearest_quasi_dist:
+                            nearest_quasi_dist = d
+                        if d < COMM_REGION_R * 2.0:
+                            wider_quasi_count += 1
+                    if wider_quasi_count > 0:
+                        r_local += 0.15 * wider_quasi_count / (nearest_quasi_dist / COMM_REGION_R + 1)
                     else:
-                        r_local -= 0.03 * explore_factor
+                        r_local -= 0.05
 
                 # 对邻域内已失败IEV施加直接惩罚，强化“提升充电率”目标
                 nearby_fail_count = 0
@@ -254,6 +260,13 @@ class World(object):
                 if nearby_fail_count > 0:
                     r_local -= 0.5 * nearby_fail_count
 
+                # ── Credit Assignment: MCS 成功被匹配到充电任务 ──
+                # 若 MCS 上一步是 idle，本步 match_and_get_neibor() 后被分配了任务，
+                # 说明其站位决策正确，应获得直接奖励
+                if not agent.is_idle and agent.charge_ev is not None:
+                    charge_ratio = min(agent.charge_power, MAX_CHARGE_PER_SESSION) / MAX_CHARGE_PER_SESSION
+                    r_local += 1.0 * charge_ratio  # 成功接单奖励
+
             else:
                 iev_indices.append(idx)
                 # 遍历agent附件的task：agent--task
@@ -264,28 +277,30 @@ class World(object):
                             and agent.total_wait_time + task_mcs.charge_time <= self.conf['MAX_WAIT_TIME'] * 5:
 
                         dist = haversine(task_mcs.charge_pos[0], task_mcs.charge_pos[1], agent.pos[0], agent.pos[1])
-                        r_local += remain_power / (dist + 1)
+                        r_local += (remain_power / 300.0) / (dist + 1)
                         # task--iev（竞争）
                         for other_iev in task_mcs.near_IEV:
                             if other_iev is not agent:
                                 dist_o = haversine(other_iev.pos[0], other_iev.pos[1], task_mcs.pos[0], task_mcs.pos[1])
-                                r_local -= 0.5 * other_iev.need_power / (dist_o + 1)
-                # 若agent经过上轮调度充电成功
+                                r_local -= 0.5 * (other_iev.need_power / MAX_CHARGE_PER_SESSION) / (dist_o + 1)
+                # ── Credit Assignment: IEV 充电成功/失败 ──
                 if agent.is_charged:
                     step_success_count += 1
-                # 若agent经过上轮调度充电失败
+                    charge_ratio = min(agent.need_power, MAX_CHARGE_PER_SESSION) / MAX_CHARGE_PER_SESSION
+                    r_local += 1.0 * charge_ratio
                 if agent.fail_charge:
                     step_fail_count += 1
+                    r_local -= 0.5
 
             local_rewards[idx] = r_local
 
         # 使用 tanh 做软截断替代 min-max 归一化，避免跨 MCS 零和博弈
         if mcs_indices:
             for i in mcs_indices:
-                local_rewards[i] = np.tanh(local_rewards[i] * 0.5)
+                local_rewards[i] = np.tanh(local_rewards[i] * 0.3)
         if iev_indices:
             for i in iev_indices:
-                local_rewards[i] = np.tanh(local_rewards[i] * 0.5)
+                local_rewards[i] = np.tanh(local_rewards[i] * 0.6)
 
         # 混合奖励
         for i, agent in enumerate(self.last_agents):
@@ -294,7 +309,7 @@ class World(object):
                 if not agent.is_idle:
                     r_global += step_success_count / (step_success_count + step_fail_count + 1)
                     r_global += min(agent.charge_power, MAX_CHARGE_PER_SESSION) / MAX_CHARGE_PER_SESSION
-                agent.reward = mcs_global_weight * r_global + mcs_local_weight * local_rewards[i]
+                agent.reward = 0.3 * r_global + 0.7 * local_rewards[i]
                 agent.total_reward += agent.reward
                 reward_n.append(agent.reward)
             else:
@@ -303,7 +318,7 @@ class World(object):
                     r_global += min(agent.need_power, MAX_CHARGE_PER_SESSION) / MAX_CHARGE_PER_SESSION
                 if agent.fail_charge:
                     r_global -= min(agent.need_power, MAX_CHARGE_PER_SESSION) / MAX_CHARGE_PER_SESSION
-                agent.reward = 0.4 * r_global + 0.6 * local_rewards[i]
+                agent.reward = 0.3 * r_global + 0.7 * local_rewards[i]
                 agent.total_reward += agent.reward
                 reward_n.append(agent.reward)
 
@@ -599,6 +614,7 @@ class World(object):
         target_h_list = []
         target_raw_list = []
         target_pos_list = []
+        target_ids_list = []
         candidate_dst_by_src = graph_data.candidate_dst_by_src
         mcs_pos_dict = graph_data.mcs_pos_dict
         quasi_pos_dict = graph_data.quasi_pos_dict
@@ -649,6 +665,19 @@ class World(object):
 
                 if pos is not None:
                     target_pos_list.append(pos)
+                    target_ids_list.append(dst_id)
+
+        # ── Top-K 候选过滤：按距离只保留最近的 K 个候选 ──
+        top_k = self.conf.get('TOP_K_MCS_CANDIDATES' if is_mcs_agent else 'TOP_K_IEV_CANDIDATES', None)
+        if top_k and len(target_ids_list) > top_k:
+            agent_pos = agent.pos  # [lon, lat]
+            dists = [haversine(agent_pos[0], agent_pos[1], p[0], p[1])
+                     for p in target_pos_list]
+            sorted_idx = sorted(range(len(dists)), key=lambda i: dists[i])[:top_k]
+            target_h_list = [target_h_list[i] for i in sorted_idx]
+            target_raw_list = [target_raw_list[i] for i in sorted_idx]
+            target_pos_list = [target_pos_list[i] for i in sorted_idx]
+            target_ids_list = [target_ids_list[i] for i in sorted_idx]
 
         # ── 堆叠 ──
         if target_h_list:
@@ -669,6 +698,7 @@ class World(object):
                 'target_raw': target_raw,
             },
             'pos': target_pos,
+            'target_ids': target_ids_list,
             'type': 'MCS' if is_mcs_agent else 'IEV',
             'id': agent.ID,
             'done': False

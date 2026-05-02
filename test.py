@@ -209,11 +209,14 @@ def test(conf, load_episode=95, test_episodes=10):
                     if isinstance(agent, MCS):
                         a_idx = gdqn.mcs_choose_action(agent_obs, mcs_epsilon)
                         pos = agent_obs['pos'][a_idx] if a_idx is not None else agent.pos
+                        if a_idx is not None and 'target_ids' in agent_obs:
+                            agent.last_target_quasi_id = agent_obs['target_ids'][a_idx]
                         action_n.append(pos)
                     else:
                         a_idx = gdqn.iev_choose_action(agent_obs, iev_epsilon)
                         if a_idx is not None:
                             pos = agent_obs['pos'][a_idx]
+                            agent.last_target_task_id = agent_obs['target_ids'][a_idx]
                         else:
                             # 无可调度 task 时，IEV 采用兜底动作：沿轨迹移动；若已到轨迹末端则原地
                             if agent.track_index + 1 < len(agent.track):
@@ -358,4 +361,4 @@ if __name__ == '__main__':
     # for i in [10, 20, 30, 40, 50, 60, 70, 80, 90]:
     #     test(conf, load_episode=i, test_episodes=1)
 
-    test(conf, load_episode=90, test_episodes=1)
+    test(conf, load_episode=100, test_episodes=5)

@@ -276,7 +276,8 @@ class GDQNNet(object):
         # 超参数
         self.lr = conf.get('LR', 0.005)
         self.gamma = conf.get('GAMMA', 0.9)
-        self.target_replace_iter = conf.get('TARGET_UPDATE_INTERVAL', 10)
+        self.target_replace_iter = conf.get('TARGET_UPDATE_INTERVAL', 100)
+        self.tau = 0.005  # 软更新系数
         self.grad_clip_norm = conf.get('GRAD_CLIP_NORM', 5.0)
         self.buffer_capacity = conf.get('BUFFER_CAPACITY', 50000)
         self.batch_size = conf.get('BATCH_SIZE', 128)
@@ -360,9 +361,10 @@ class GDQNNet(object):
         if len(states) == 0:
             return 0.0
 
-        # 1. 目标网络参数定期硬更新
+        # 1. 目标网络软更新 (Polyak averaging)
         if step_counter % self.target_replace_iter == 0:
-            target_net.load_state_dict(eval_net.state_dict())
+            for target_param, eval_param in zip(target_net.parameters(), eval_net.parameters()):
+                target_param.data.copy_(self.tau * eval_param.data + (1.0 - self.tau) * target_param.data)
 
         # 2) 当前状态并行计算 Q(s,a)
         packed_state_feat, state_offsets = self._pack_feats(states)

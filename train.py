@@ -1,8 +1,11 @@
 import time
 import os
-import pandas as pd  # ✨ 新增：用于将数据保存为 CSV
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import torch
 
 from GDQN.net import GDQNNet, MCSHeteroGNN, IEVHeteroGNN
@@ -61,7 +64,7 @@ def _set_partial_trainable(model, unfreeze_last_conv_layers=1):
 def train(conf):
     conf = dict(conf)
     conf.setdefault('EPS_START', 0.20)
-    conf.setdefault('EPS_END', 0.02)
+    conf.setdefault('EPS_END', 0.01)
     conf.setdefault('EPS_DECAY_EPISODES', 40)
 
     # 初始化环境
@@ -146,12 +149,16 @@ def train(conf):
                 if isinstance(agent, MCS):
                     a_idx = gdqn.mcs_choose_action(agent_obs, mcs_epsilon)              # action_list中的下标
                     pos = agent_obs['pos'][a_idx] if a_idx is not None else agent.pos   # 调度位置坐标
+                    # 记录目标 quasi ID，供 credit assignment 使用
+                    if a_idx is not None and 'target_ids' in agent_obs:
+                        agent.last_target_quasi_id = agent_obs['target_ids'][a_idx]
                     action_n.append(pos)
                     action_idx_n.append(a_idx)
                 else:
                     a_idx = gdqn.iev_choose_action(agent_obs, iev_epsilon)
                     if a_idx is not None:
                         pos = agent_obs['pos'][a_idx]
+                        agent.last_target_task_id = agent_obs['target_ids'][a_idx]
                     else:
                         # 无可调度 task 时，IEV 采用兜底动作：沿轨迹移动；若已到轨迹末端则原地
                         if agent.track_index + 1 < len(agent.track):
@@ -326,6 +333,54 @@ def train(conf):
     df_metrics.index.name = 'episode'
     df_metrics.to_csv(csv_path)
     print(f"\n✅ 训练完全结束！全局核心指标已保存至：{csv_path}")
+
+    # ==========================================
+    # 训练结束：绘制 Reward / 充电率 / 能效 随 Episode 变化图
+    # ==========================================
+    episodes = range(len(history_metrics['total_charged_prop']))
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+    # 1) 充电成功率
+    ax = axes[0, 0]
+    ax.plot(episodes, history_metrics['total_charged_prop'], 'b-', linewidth=1.2)
+    ax.set_title('Charge Rate')
+    ax.set_xlabel('Episode')
+    ax.set_ylabel('Rate')
+    ax.set_ylim(0, 1)
+    ax.grid(alpha=0.3)
+
+    # 2) MCS / IEV 平均 Reward
+    ax = axes[0, 1]
+    ax.plot(episodes, history_metrics['avg_mcs_reward'], 'tab:orange', linewidth=1.2, label='MCS')
+    ax.plot(episodes, history_metrics['avg_iev_reward'], 'tab:green', linewidth=1.2, label='IEV')
+    ax.set_title('Avg Reward per Agent')
+    ax.set_xlabel('Episode')
+    ax.set_ylabel('Reward')
+    ax.legend()
+    ax.grid(alpha=0.3)
+
+    # 3) 电能利用率
+    ax = axes[1, 0]
+    ax.plot(episodes, history_metrics['energy_efficiency'], 'tab:purple', linewidth=1.2)
+    ax.set_title('Energy Efficiency')
+    ax.set_xlabel('Episode')
+    ax.set_ylabel('Ratio')
+    ax.set_ylim(0, 1)
+    ax.grid(alpha=0.3)
+
+    # 4) 总利润
+    ax = axes[1, 1]
+    ax.plot(episodes, history_metrics['total_profit'], 'tab:red', linewidth=1.2)
+    ax.set_title('Total Profit')
+    ax.set_xlabel('Episode')
+    ax.set_ylabel('Profit')
+    ax.grid(alpha=0.3)
+
+    fig.tight_layout()
+    fig_path = './results/training_curves.png'
+    fig.savefig(fig_path, dpi=150)
+    plt.close(fig)
+    print(f"📈 训练曲线图已保存至：{fig_path}")
 
 
 # 运行训练

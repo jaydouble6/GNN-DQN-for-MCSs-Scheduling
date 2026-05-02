@@ -41,6 +41,7 @@ class Vehicle(object):
         self.fail_charge = False  # 是否充电失败
 
         self.expense = 0  # 充电花费
+        self.last_target_task_id = None  # 上次 action 选择的目标 task MCS ID
 
     def set_charge(self):
         # 每个车辆在每个step调用一次
@@ -123,6 +124,7 @@ class Vehicle(object):
 
         self.action_next = None
         self.expense = 0
+        self.last_target_task_id = None
 
     def step_finish(self):
         self.near_task_MCS = []
@@ -167,6 +169,7 @@ class MCS(object):
         self.reward = 0
         self.cost = 0
         self.charge_dist = 0
+        self.last_target_quasi_id = None  # 上次 action 选择的目标 quasi EV ID
 
     def reset(self, pos):
         self.is_idle = True
@@ -194,6 +197,7 @@ class MCS(object):
         self.last_pos = []
         self.cost = 0
         self.charge_dist = 0
+        self.last_target_quasi_id = None
 
     def set_new_iev(self, iev):
         self.is_idle = False
